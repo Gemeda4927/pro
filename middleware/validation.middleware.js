@@ -20,6 +20,65 @@ exports.validate = (validations) => {
   };
 };
 
+// Helper function for phone validation
+const validatePhoneNumber = (value) => {
+  if (!value) return true;
+  
+  // Remove all non-digit characters except + at the beginning
+  const cleaned = value.replace(/[^\d+]/g, '');
+  
+  // Ethiopian phone number patterns
+  const ethiopianPatterns = [
+    /^\+251[1-9][0-9]{8}$/,     // +251 followed by 9 digits
+    /^0[1-9][0-9]{8}$/,         // 0 followed by 9 digits
+    /^251[1-9][0-9]{8}$/,       // 251 followed by 9 digits
+    /^9[0-9]{8}$/               // 9 followed by 8 digits (mobile)
+  ];
+  
+  // International patterns
+  const internationalPatterns = [
+    /^\+[1-9]\d{1,14}$/,        // E.164 international format
+    /^[1-9]\d{1,14}$/,          // International without +
+    /^0[1-9]\d{8,}$/,           // Local format with leading 0
+    /^\(\d{3}\) \d{3}-\d{4}$/,  // US format: (123) 456-7890
+    /^\d{3}-\d{3}-\d{4}$/       // US format: 123-456-7890
+  ];
+  
+  // Check Ethiopian patterns first
+  const isEthiopian = ethiopianPatterns.some(pattern => pattern.test(cleaned) || pattern.test(value));
+  
+  // Check international patterns
+  const isInternational = internationalPatterns.some(pattern => pattern.test(cleaned) || pattern.test(value));
+  
+  // Check with simple length validation
+  const hasValidLength = cleaned.length >= 9 && cleaned.length <= 15;
+  
+  if (!isEthiopian && !isInternational && !hasValidLength) {
+    throw new Error('Please provide a valid phone number. Ethiopian formats: +251XXXXXXXXX, 0XXXXXXXXX, 9XXXXXXXX');
+  }
+  
+  return true;
+};
+
+// Helper to format Ethiopian phone numbers
+exports.formatEthiopianPhone = (phone) => {
+  if (!phone) return phone;
+  
+  // Remove all non-digit characters
+  const digits = phone.replace(/\D/g, '');
+  
+  // Format Ethiopian numbers
+  if (digits.startsWith('251') && digits.length === 12) {
+    return `+${digits}`; // +251XXXXXXXXX
+  } else if (digits.startsWith('0') && digits.length === 10) {
+    return `+251${digits.slice(1)}`; // Convert 09XXXXXXXX to +2519XXXXXXXX
+  } else if (digits.startsWith('9') && digits.length === 9) {
+    return `+251${digits}`; // Convert 9XXXXXXXX to +2519XXXXXXXX
+  }
+  
+  return phone;
+};
+
 // Auth validation rules
 exports.registerValidation = [
   body('firstName')
@@ -45,7 +104,8 @@ exports.registerValidation = [
   
   body('phone')
     .optional()
-    .isMobilePhone().withMessage('Please provide a valid phone number')
+    .custom(validatePhoneNumber)
+    .withMessage('Please provide a valid phone number. Accepts Ethiopian (+251, 0, 9) and international formats.')
 ];
 
 exports.loginValidation = [
@@ -107,7 +167,8 @@ exports.updateProfileValidation = [
   
   body('phone')
     .optional()
-    .isMobilePhone().withMessage('Please provide a valid phone number'),
+    .custom(validatePhoneNumber)
+    .withMessage('Please provide a valid phone number. Ethiopian formats: +251XXXXXXXXX, 0XXXXXXXXX, 9XXXXXXXX'),
   
   body('bio')
     .optional()
@@ -157,11 +218,12 @@ exports.updateProfileValidation = [
   
   body('preferences.language')
     .optional()
-    .isIn(['en', 'fr', 'es', 'de']).withMessage('Invalid language'),
+    .isIn(['en', 'fr', 'es', 'de', 'am']).withMessage('Invalid language'),
   
   body('preferences.timezone')
     .optional()
-    .isLength({ min: 1 }).withMessage('Timezone is required')
+    .isIn(['UTC', 'Africa/Addis_Ababa', 'America/New_York', 'Europe/London', 'Asia/Tokyo'])
+    .withMessage('Invalid timezone')
 ];
 
 exports.updateUserRoleValidation = [
@@ -215,16 +277,76 @@ exports.fileUploadValidation = [
     const image = req.files.image;
     
     // Check file type
-    if (!image.mimetype.startsWith('image/')) {
-      throw new Error('Please upload an image file');
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/jpg'];
+    if (!allowedMimeTypes.includes(image.mimetype)) {
+      throw new Error('Please upload a valid image file (JPEG, PNG, GIF, WebP)');
     }
     
-    // Check file size (10MB max)
-    const maxSize = 10 * 1024 * 1024;
+    // Check file size (100MB max from env or default to 10MB)
+    const maxSize = process.env.MAX_FILE_SIZE ? parseInt(process.env.MAX_FILE_SIZE) : 10 * 1024 * 1024;
     if (image.size > maxSize) {
-      throw new Error('File size should be less than 10MB');
+      throw new Error(`File size should be less than ${maxSize / (1024 * 1024)}MB`);
     }
     
     return true;
   })
+];
+
+// Ethiopian specific validation rules
+exports.ethiopianPhoneValidation = [
+  body('phone')
+    .notEmpty().withMessage('Phone number is required for Ethiopian users')
+    .custom((value) => {
+      const ethiopianPatterns = [
+        /^\+251[1-9][0-9]{8}$/,     // +251 followed by 9 digits
+        /^0[1-9][0-9]{8}$/,         // 0 followed by 9 digits
+        /^251[1-9][0-9]{8}$/,       // 251 followed by 9 digits
+        /^9[0-9]{8}$/               // 9 followed by 8 digits
+      ];
+      
+      const isValid = ethiopianPatterns.some(pattern => pattern.test(value));
+      
+      if (!isValid) {
+        throw new Error('Please provide a valid Ethiopian phone number. Formats: +251XXXXXXXXX, 0XXXXXXXXX, 9XXXXXXXX');
+      }
+      
+      return true;
+    })
+];
+
+// Additional Ethiopian user validation
+exports.ethiopianUserValidation = [
+  body('firstName')
+    .notEmpty().withMessage('First name is required')
+    .isLength({ min: 2, max: 50 }).withMessage('First name must be between 2 and 50 characters')
+    .trim(),
+  
+  body('lastName')
+    .notEmpty().withMessage('Last name is required')
+    .isLength({ min: 2, max: 50 }).withMessage('Last name must be between 2 and 50 characters')
+    .trim(),
+  
+  body('email')
+    .optional()
+    .isEmail().withMessage('Please provide a valid email')
+    .normalizeEmail(),
+  
+  body('phone')
+    .notEmpty().withMessage('Phone number is required')
+    .custom((value) => {
+      const ethiopianPatterns = [
+        /^\+251[1-9][0-9]{8}$/,
+        /^0[1-9][0-9]{8}$/,
+        /^251[1-9][0-9]{8}$/,
+        /^9[0-9]{8}$/
+      ];
+      
+      const isValid = ethiopianPatterns.some(pattern => pattern.test(value));
+      
+      if (!isValid) {
+        throw new Error('Please provide a valid Ethiopian phone number');
+      }
+      
+      return true;
+    })
 ];
